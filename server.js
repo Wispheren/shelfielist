@@ -7,7 +7,7 @@ const { DatabaseSync } = require("node:sqlite");
 const PORT = Number(process.env.PORT || 3434);
 const HOST = process.env.HOST || "0.0.0.0";
 const publicDir = path.join(__dirname, "public");
-const vendorDir = path.join(__dirname, "node_modules", "quagga", "dist");
+const vendorDir = path.join(__dirname, "public", "vendor");
 const dataDir = path.join(__dirname, "data");
 const dbPath = path.join(dataDir, "shelfielist.db");
 
