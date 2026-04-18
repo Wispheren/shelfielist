@@ -79,6 +79,7 @@ const translations = {
     scannerPhotoButton: "Tag billede af stregkode",
     scannerPermissionError:
       "Kameraet kunne ikke åbnes. Du kan stadig skrive stregkoden manuelt herunder.",
+    scannerPermissionDetailed: "Kamerafejl: {reason}",
     scannerInsecureContext:
       "Live kamera kræver en sikker forbindelse på telefonen. Åbn Shelfielist via HTTPS, eller brug billed-knappen herunder.",
     scannerUnsupported:
@@ -176,6 +177,7 @@ const translations = {
     scannerPhotoButton: "Take barcode photo",
     scannerPermissionError:
       "The camera could not be opened. You can still type the barcode manually below.",
+    scannerPermissionDetailed: "Camera error: {reason}",
     scannerInsecureContext:
       "Live camera access requires a secure connection on phones. Open Shelfielist over HTTPS, or use the photo button below.",
     scannerUnsupported:
@@ -309,6 +311,14 @@ function formatNumber(value) {
 function showStatus(message, tone = "neutral") {
   elements.statusMessage.textContent = message;
   elements.statusMessage.dataset.tone = tone;
+}
+
+function describeScannerError(error) {
+  if (!error) {
+    return "unknown";
+  }
+
+  return error.name || error.message || String(error);
 }
 
 function showStatusKey(key, tone = "neutral", variables = {}) {
@@ -672,16 +682,17 @@ async function startZxingScanner() {
     );
     showStatus(t("scannerCameraLive"), "success");
     return true;
-  } catch {
+  } catch (error) {
+    console.error("ZXing scanner failed", error);
     state.scanner.active = false;
     return false;
   }
 }
 
 async function startQuaggaScanner() {
-  if (!window.Quagga) {
-    return false;
-  }
+    if (!window.Quagga) {
+      return false;
+    }
 
   return new Promise((resolve) => {
     try {
@@ -724,6 +735,7 @@ async function startQuaggaScanner() {
         },
         (error) => {
           if (error) {
+            console.error("Quagga init failed", error);
             setScannerMode("");
             resolve(false);
             return;
@@ -736,7 +748,8 @@ async function startQuaggaScanner() {
           resolve(true);
         }
       );
-    } catch {
+    } catch (error) {
+      console.error("Quagga scanner failed", error);
       setScannerMode("");
       resolve(false);
     }
@@ -785,7 +798,8 @@ async function processBarcodeImage(file) {
 
     await handleScannedBarcode(text);
     showStatusKey("scannerCodeUsed", "success");
-  } catch {
+  } catch (error) {
+    console.error("Barcode image processing failed", error);
     showStatus(t("scannerPhotoUnsupported"), "error");
   }
 }
@@ -836,7 +850,8 @@ async function openScanner() {
     state.scanner.active = true;
     showStatus(t("scannerCameraLive"), "success");
     state.scanner.rafId = requestAnimationFrame(scanCurrentFrame);
-  } catch {
+  } catch (error) {
+    console.error("Native barcode scanner failed", error);
     showStatus(t("scannerFallbackCamera"));
     const quaggaStarted = await startQuaggaScanner();
     if (quaggaStarted) {
@@ -845,7 +860,9 @@ async function openScanner() {
     }
     const zxingStarted = await startZxingScanner();
     showStatus(
-      zxingStarted ? t("scannerCameraLive") : t("scannerPermissionError"),
+      zxingStarted
+        ? t("scannerCameraLive")
+        : t("scannerPermissionDetailed", { reason: describeScannerError(error) }),
       zxingStarted ? "success" : "error"
     );
   }

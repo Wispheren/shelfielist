@@ -8,6 +8,7 @@
     "dev": "node --watch --no-warnings=ExperimentalWarning server.js"
   },
   "dependencies": {
+    "@zxing/browser": "^0.1.5",
     "quagga": "^0.12.1"
   }
 }
