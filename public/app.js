@@ -541,7 +541,7 @@ function closeScanner() {
 
   elements.scannerVideo.srcObject = null;
   elements.scannerSheet.classList.add("hidden");
-  elements.scannerSheet.setAttribute("aria-hidden", "true");
+  elements.scannerSheet.inert = true;
 }
 
 function prefillFormForBarcode(barcode) {
@@ -632,7 +632,7 @@ async function openScanner() {
   clearScannerResult();
   elements.manualBarcodeInput.value = "";
   elements.scannerSheet.classList.remove("hidden");
-  elements.scannerSheet.setAttribute("aria-hidden", "false");
+  elements.scannerSheet.inert = false;
   showStatus(t("scannerSearching"));
 
   if (!window.isSecureContext && location.hostname !== "localhost" && location.hostname !== "127.0.0.1") {
