@@ -8,16 +8,10 @@ const state = {
   status: null,
   scanner: {
     active: false,
-    detector: null,
     lastCode: "",
-    rafId: null,
-    rawStreamReady: false,
-    stream: null,
-    mode: "",
     lastScanAt: 0,
-    quaggaReady: false,
-    zxingControls: null,
-    zxingReader: null
+    zxingReader: null,
+    zxingControls: null
   }
 };
 
@@ -252,7 +246,6 @@ const elements = {
   quantityLabel: document.querySelector("#quantityLabel"),
   scannerEyebrow: document.querySelector("#scannerEyebrow"),
   scannerHelp: document.querySelector("#scannerHelp"),
-  scannerPreview: document.querySelector("#scannerPreview"),
   scannerResult: document.querySelector("#scannerResult"),
   scannerSheet: document.querySelector("#scannerSheet"),
   scannerStatus: document.querySelector("#scannerStatus"),
@@ -536,72 +529,19 @@ function clearScannerResult() {
   elements.scannerResult.classList.add("hidden");
 }
 
-function setScannerMode(mode) {
-  state.scanner.mode = mode;
-  elements.scannerPreview.dataset.mode = mode || "";
-}
-
 function closeScanner() {
   state.scanner.active = false;
   state.scanner.lastCode = "";
   state.scanner.lastScanAt = 0;
-  state.scanner.rawStreamReady = false;
-  setScannerMode("");
-
-  if (state.scanner.rafId) {
-    cancelAnimationFrame(state.scanner.rafId);
-    state.scanner.rafId = null;
-  }
-
-  if (state.scanner.stream) {
-    for (const track of state.scanner.stream.getTracks()) {
-      track.stop();
-    }
-    state.scanner.stream = null;
-  }
 
   if (state.scanner.zxingControls) {
     state.scanner.zxingControls.stop();
     state.scanner.zxingControls = null;
   }
 
-  if (window.Quagga) {
-    try {
-      window.Quagga.stop();
-    } catch {}
-  }
-
   elements.scannerVideo.srcObject = null;
   elements.scannerSheet.classList.add("hidden");
   elements.scannerSheet.setAttribute("aria-hidden", "true");
-}
-
-async function ensureRawCameraStream() {
-  if (state.scanner.stream) {
-    if (!elements.scannerVideo.srcObject) {
-      elements.scannerVideo.srcObject = state.scanner.stream;
-    }
-    if (!state.scanner.rawStreamReady) {
-      await elements.scannerVideo.play();
-      state.scanner.rawStreamReady = true;
-    }
-    setScannerMode("raw");
-    return true;
-  }
-
-  state.scanner.stream = await navigator.mediaDevices.getUserMedia({
-    video: {
-      facingMode: { ideal: "environment" },
-      width: { ideal: 1280 },
-      height: { ideal: 720 }
-    },
-    audio: false
-  });
-  elements.scannerVideo.srcObject = state.scanner.stream;
-  await elements.scannerVideo.play();
-  state.scanner.rawStreamReady = true;
-  setScannerMode("raw");
-  return true;
 }
 
 function prefillFormForBarcode(barcode) {
@@ -655,164 +595,9 @@ async function handleScannedBarcode(barcode) {
   `);
 }
 
-async function scanCurrentFrame() {
-  if (!state.scanner.active || !state.scanner.detector) {
-    return;
-  }
-
-  try {
-    const detected = await state.scanner.detector.detect(elements.scannerVideo);
-    if (detected.length > 0) {
-      await handleScannedBarcode(detected[0].rawValue);
-    }
-  } catch {
-    showStatus(t("scannerUnsupported"), "error");
-  } finally {
-    if (state.scanner.active) {
-      state.scanner.rafId = requestAnimationFrame(scanCurrentFrame);
-    }
-  }
-}
-
-function getDecodedText(result) {
-  if (!result) {
-    return "";
-  }
-
-  if (typeof result === "string") {
-    return result;
-  }
-
-  if (typeof result.getText === "function") {
-    return result.getText();
-  }
-
-  return result.text || result.rawValue || "";
-}
-
-async function startZxingScanner() {
-  const ZXingBrowser = window.ZXingBrowser;
-  if (!ZXingBrowser?.BrowserMultiFormatReader) {
-    return false;
-  }
-
-  state.scanner.zxingReader =
-    state.scanner.zxingReader ||
-    new ZXingBrowser.BrowserMultiFormatReader(undefined, {
-      delayBetweenScanAttempts: 250
-    });
-
-  try {
-    state.scanner.active = true;
-    setScannerMode("zxing");
-    state.scanner.zxingControls = await state.scanner.zxingReader.decodeFromVideoDevice(
-      undefined,
-      elements.scannerVideo,
-      async (result) => {
-        const text = getDecodedText(result);
-        if (text) {
-          await handleScannedBarcode(text);
-        }
-      }
-    );
-    showStatus(t("scannerCameraLive"), "success");
-    return true;
-  } catch (error) {
-    console.error("ZXing scanner failed", error);
-    state.scanner.active = false;
-    return false;
-  }
-}
-
-async function startQuaggaScanner() {
-    if (!window.Quagga) {
-      return false;
-    }
-
-  return new Promise((resolve) => {
-    try {
-      setScannerMode("quagga");
-      const onDetected = async (result) => {
-        const code = result?.codeResult?.code;
-        if (code) {
-          await handleScannedBarcode(code);
-        }
-      };
-
-      window.Quagga.offDetected(onDetected);
-      window.Quagga.init(
-        {
-          inputStream: {
-            type: "LiveStream",
-            target: elements.scannerPreview,
-            constraints: {
-              facingMode: "environment",
-              width: { ideal: 1280 },
-              height: { ideal: 720 }
-            }
-          },
-          locator: {
-            patchSize: "medium",
-            halfSample: true
-          },
-          numOfWorkers: 2,
-          decoder: {
-            readers: [
-              "ean_reader",
-              "ean_8_reader",
-              "upc_reader",
-              "upc_e_reader",
-              "code_128_reader",
-              "code_39_reader"
-            ]
-          },
-          locate: true
-        },
-        (error) => {
-          if (error) {
-            console.error("Quagga init failed", error);
-            setScannerMode("");
-            resolve(false);
-            return;
-          }
-
-          state.scanner.active = true;
-          state.scanner.quaggaReady = true;
-          window.Quagga.onDetected(onDetected);
-          window.Quagga.start();
-          resolve(true);
-        }
-      );
-    } catch (error) {
-      console.error("Quagga scanner failed", error);
-      setScannerMode("");
-      resolve(false);
-    }
-  });
-}
-
 async function processBarcodeImage(file) {
   try {
     showStatus(t("scannerPhotoProcessing"));
-    if (window.BarcodeDetector) {
-      const bitmap = await createImageBitmap(file);
-      const detector =
-        state.scanner.detector ||
-        new window.BarcodeDetector({
-          formats: ["ean_13", "ean_8", "upc_a", "upc_e", "code_128", "code_39"]
-        });
-      const detected = await detector.detect(bitmap);
-      bitmap.close();
-
-      if (!detected.length) {
-        showStatus(t("scannerPhotoNoCode"), "error");
-        return;
-      }
-
-      await handleScannedBarcode(detected[0].rawValue);
-      showStatusKey("scannerCodeUsed", "success");
-      return;
-    }
 
     const ZXingBrowser = window.ZXingBrowser;
     if (!ZXingBrowser?.BrowserMultiFormatReader) {
@@ -823,19 +608,22 @@ async function processBarcodeImage(file) {
     state.scanner.zxingReader =
       state.scanner.zxingReader || new ZXingBrowser.BrowserMultiFormatReader();
     const imageUrl = URL.createObjectURL(file);
-    const result = await state.scanner.zxingReader.decodeFromImageUrl(imageUrl);
-    URL.revokeObjectURL(imageUrl);
-    const text = getDecodedText(result);
-    if (!text) {
-      showStatus(t("scannerPhotoNoCode"), "error");
-      return;
-    }
+    try {
+      const result = await state.scanner.zxingReader.decodeFromImageUrl(imageUrl);
+      const text = result?.getText?.() || result?.text || "";
+      if (!text) {
+        showStatus(t("scannerPhotoNoCode"), "error");
+        return;
+      }
 
-    await handleScannedBarcode(text);
-    showStatusKey("scannerCodeUsed", "success");
+      await handleScannedBarcode(text);
+      showStatusKey("scannerCodeUsed", "success");
+    } finally {
+      URL.revokeObjectURL(imageUrl);
+    }
   } catch (error) {
     console.error("Barcode image processing failed", error);
-    showStatus(t("scannerPhotoUnsupported"), "error");
+    showStatus(t("scannerPhotoNoCode"), "error");
   }
 }
 
@@ -857,38 +645,33 @@ async function openScanner() {
     return;
   }
 
+  const ZXingBrowser = window.ZXingBrowser;
+  if (!ZXingBrowser?.BrowserMultiFormatReader) {
+    showStatus(t("scannerUnsupported"), "error");
+    return;
+  }
+
   try {
-    await ensureRawCameraStream();
-    showStatus(t("scannerCameraLive"), "success");
+    state.scanner.zxingReader =
+      state.scanner.zxingReader ||
+      new ZXingBrowser.BrowserMultiFormatReader(undefined, {
+        delayBetweenScanAttempts: 250
+      });
 
-    if (window.BarcodeDetector) {
-      try {
-        state.scanner.detector = new window.BarcodeDetector({
-          formats: ["ean_13", "ean_8", "upc_a", "upc_e", "code_128", "code_39"]
-        });
-        state.scanner.active = true;
-        setScannerMode("native");
-        state.scanner.rafId = requestAnimationFrame(scanCurrentFrame);
-        return;
-      } catch (error) {
-        console.error("Native barcode scanner setup failed", error);
+    state.scanner.zxingControls = await state.scanner.zxingReader.decodeFromVideoDevice(
+      undefined,
+      elements.scannerVideo,
+      async (result) => {
+        const text = result?.getText?.() || result?.text || "";
+        if (text) {
+          await handleScannedBarcode(text);
+        }
       }
-    }
-
-    showStatus(t("scannerFallbackCamera"));
-    const quaggaStarted = await startQuaggaScanner();
-    if (quaggaStarted) {
-      showStatus(t("scannerCameraLive"), "success");
-      return;
-    }
-
-    const zxingStarted = await startZxingScanner();
-    showStatus(
-      zxingStarted ? t("scannerCameraLive") : t("scannerUnsupported"),
-      zxingStarted ? "success" : "error"
     );
+    state.scanner.active = true;
+    showStatus(t("scannerCameraLive"), "success");
   } catch (error) {
-    console.error("Raw camera startup failed", error);
+    console.error("Scanner startup failed", error);
     showStatus(t("scannerPermissionDetailed", { reason: describeScannerError(error) }), "error");
   }
 }
