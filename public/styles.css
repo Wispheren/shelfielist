@@ -423,6 +423,16 @@ button {
   display: block;
 }
 
+.scanner-preview[data-mode="quagga"] video {
+  width: 100%;
+  height: min(52vh, 420px);
+  object-fit: cover;
+}
+
+.scanner-preview[data-mode="quagga"] canvas {
+  display: none !important;
+}
+
 .scanner-preview__frame {
   position: absolute;
   inset: 18% 14%;

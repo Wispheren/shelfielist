@@ -12,6 +12,9 @@ const state = {
     lastCode: "",
     rafId: null,
     stream: null,
+    mode: "",
+    lastScanAt: 0,
+    quaggaReady: false,
     zxingControls: null,
     zxingReader: null
   }
@@ -85,6 +88,7 @@ const translations = {
     scannerPhotoProcessing: "Behandler billede...",
     scannerPhotoNoCode: "Der blev ikke fundet en stregkode på billedet.",
     scannerFallbackLoading: "Indlæser alternativ scanner...",
+    scannerFallbackCamera: "Prøver alternativ kamerascanner...",
     scannerSearching: "Scanner efter stregkode...",
     scannerFoundKnown: "Fundet i lageret",
     scannerFoundUnknown: "Ny stregkode",
@@ -181,6 +185,7 @@ const translations = {
     scannerPhotoProcessing: "Processing photo...",
     scannerPhotoNoCode: "No barcode was found in the photo.",
     scannerFallbackLoading: "Loading fallback scanner...",
+    scannerFallbackCamera: "Trying fallback live camera scanner...",
     scannerSearching: "Looking for a barcode...",
     scannerFoundKnown: "Found in inventory",
     scannerFoundUnknown: "New barcode",
@@ -244,6 +249,7 @@ const elements = {
   quantityLabel: document.querySelector("#quantityLabel"),
   scannerEyebrow: document.querySelector("#scannerEyebrow"),
   scannerHelp: document.querySelector("#scannerHelp"),
+  scannerPreview: document.querySelector("#scannerPreview"),
   scannerResult: document.querySelector("#scannerResult"),
   scannerSheet: document.querySelector("#scannerSheet"),
   scannerTitle: document.querySelector("#scannerTitle"),
@@ -514,9 +520,16 @@ function clearScannerResult() {
   elements.scannerResult.classList.add("hidden");
 }
 
+function setScannerMode(mode) {
+  state.scanner.mode = mode;
+  elements.scannerPreview.dataset.mode = mode || "";
+}
+
 function closeScanner() {
   state.scanner.active = false;
   state.scanner.lastCode = "";
+  state.scanner.lastScanAt = 0;
+  setScannerMode("");
 
   if (state.scanner.rafId) {
     cancelAnimationFrame(state.scanner.rafId);
@@ -535,6 +548,12 @@ function closeScanner() {
     state.scanner.zxingControls = null;
   }
 
+  if (window.Quagga) {
+    try {
+      window.Quagga.stop();
+    } catch {}
+  }
+
   elements.scannerVideo.srcObject = null;
   elements.scannerSheet.classList.add("hidden");
   elements.scannerSheet.setAttribute("aria-hidden", "true");
@@ -549,11 +568,16 @@ function prefillFormForBarcode(barcode) {
 
 async function handleScannedBarcode(barcode) {
   const normalized = String(barcode || "").trim();
-  if (!normalized || normalized === state.scanner.lastCode) {
+  const now = Date.now();
+  if (
+    !normalized ||
+    (normalized === state.scanner.lastCode && now - state.scanner.lastScanAt < 1500)
+  ) {
     return;
   }
 
   state.scanner.lastCode = normalized;
+  state.scanner.lastScanAt = now;
   elements.manualBarcodeInput.value = normalized;
 
   const item = findItemByBarcode(normalized);
@@ -635,6 +659,7 @@ async function startZxingScanner() {
 
   try {
     state.scanner.active = true;
+    setScannerMode("zxing");
     state.scanner.zxingControls = await state.scanner.zxingReader.decodeFromVideoDevice(
       undefined,
       elements.scannerVideo,
@@ -651,6 +676,71 @@ async function startZxingScanner() {
     state.scanner.active = false;
     return false;
   }
+}
+
+async function startQuaggaScanner() {
+  if (!window.Quagga) {
+    return false;
+  }
+
+  return new Promise((resolve) => {
+    try {
+      setScannerMode("quagga");
+      const onDetected = async (result) => {
+        const code = result?.codeResult?.code;
+        if (code) {
+          await handleScannedBarcode(code);
+        }
+      };
+
+      window.Quagga.offDetected(onDetected);
+      window.Quagga.init(
+        {
+          inputStream: {
+            type: "LiveStream",
+            target: elements.scannerPreview,
+            constraints: {
+              facingMode: "environment",
+              width: { ideal: 1280 },
+              height: { ideal: 720 }
+            }
+          },
+          locator: {
+            patchSize: "medium",
+            halfSample: true
+          },
+          numOfWorkers: 2,
+          decoder: {
+            readers: [
+              "ean_reader",
+              "ean_8_reader",
+              "upc_reader",
+              "upc_e_reader",
+              "code_128_reader",
+              "code_39_reader"
+            ]
+          },
+          locate: true
+        },
+        (error) => {
+          if (error) {
+            setScannerMode("");
+            resolve(false);
+            return;
+          }
+
+          state.scanner.active = true;
+          state.scanner.quaggaReady = true;
+          window.Quagga.onDetected(onDetected);
+          window.Quagga.start();
+          resolve(true);
+        }
+      );
+    } catch {
+      setScannerMode("");
+      resolve(false);
+    }
+  });
 }
 
 async function processBarcodeImage(file) {
@@ -720,8 +810,16 @@ async function openScanner() {
 
   if (!window.BarcodeDetector) {
     showStatus(t("scannerFallbackLoading"));
+    const quaggaStarted = await startQuaggaScanner();
+    if (quaggaStarted) {
+      showStatus(t("scannerCameraLive"), "success");
+      return;
+    }
     const zxingStarted = await startZxingScanner();
-    showStatus(zxingStarted ? t("scannerCameraLive") : t("scannerUnsupported"), zxingStarted ? "success" : "error");
+    showStatus(
+      zxingStarted ? t("scannerCameraLive") : t("scannerUnsupported"),
+      zxingStarted ? "success" : "error"
+    );
     return;
   }
 
@@ -739,8 +837,17 @@ async function openScanner() {
     showStatus(t("scannerCameraLive"), "success");
     state.scanner.rafId = requestAnimationFrame(scanCurrentFrame);
   } catch {
+    showStatus(t("scannerFallbackCamera"));
+    const quaggaStarted = await startQuaggaScanner();
+    if (quaggaStarted) {
+      showStatus(t("scannerCameraLive"), "success");
+      return;
+    }
     const zxingStarted = await startZxingScanner();
-    showStatus(zxingStarted ? t("scannerCameraLive") : t("scannerPermissionError"), zxingStarted ? "success" : "error");
+    showStatus(
+      zxingStarted ? t("scannerCameraLive") : t("scannerPermissionError"),
+      zxingStarted ? "success" : "error"
+    );
   }
 }
 
