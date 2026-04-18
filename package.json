@@ -9,6 +9,7 @@
   },
   "dependencies": {
     "@zxing/browser": "^0.1.5",
+    "express": "^5.2.1",
     "quagga": "^0.12.1"
   }
 }

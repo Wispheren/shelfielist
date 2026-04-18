@@ -1,13 +1,11 @@
-const http = require("node:http");
-const fs = require("node:fs");
 const path = require("node:path");
-const { URL } = require("node:url");
+const fs = require("node:fs");
+const express = require("express");
 const { DatabaseSync } = require("node:sqlite");
 
 const PORT = Number(process.env.PORT || 3434);
 const HOST = process.env.HOST || "0.0.0.0";
 const publicDir = path.join(__dirname, "public");
-const vendorDir = path.join(__dirname, "public", "vendor");
 const dataDir = path.join(__dirname, "data");
 const dbPath = path.join(dataDir, "shelfielist.db");
 
@@ -166,56 +164,6 @@ const selectItemStmt = db.prepare(`
   WHERE id = ?
 `);
 
-const mimeTypes = {
-  ".css": "text/css; charset=utf-8",
-  ".html": "text/html; charset=utf-8",
-  ".ico": "image/x-icon",
-  ".js": "application/javascript; charset=utf-8",
-  ".json": "application/json; charset=utf-8",
-  ".png": "image/png",
-  ".svg": "image/svg+xml; charset=utf-8"
-};
-
-function sendJson(res, statusCode, payload) {
-  res.writeHead(statusCode, { "Content-Type": "application/json; charset=utf-8" });
-  res.end(JSON.stringify(payload));
-}
-
-function sendText(res, statusCode, body) {
-  res.writeHead(statusCode, { "Content-Type": "text/plain; charset=utf-8" });
-  res.end(body);
-}
-
-function parseBody(req) {
-  return new Promise((resolve, reject) => {
-    let body = "";
-    req.on("data", (chunk) => {
-      body += chunk;
-      if (body.length > 1_000_000) {
-        const error = new Error("Request body too large");
-        error.code = "REQUEST_BODY_TOO_LARGE";
-        reject(error);
-        req.destroy();
-      }
-    });
-    req.on("end", () => {
-      if (!body) {
-        resolve({});
-        return;
-      }
-
-      try {
-        resolve(JSON.parse(body));
-      } catch {
-        const error = new Error("Invalid JSON");
-        error.code = "INVALID_JSON";
-        reject(error);
-      }
-    });
-    req.on("error", reject);
-  });
-}
-
 function normalizeItemInput(input) {
   const name = String(input.name || "").trim();
   const category = String(input.category || "Ukategoriseret").trim() || "Ukategoriseret";
@@ -278,164 +226,94 @@ function getErrorResponse(error) {
   };
 }
 
-function serveStaticFile(req, res, pathname) {
-  const requestedPath = pathname === "/" ? "/index.html" : pathname;
-  const safePath = path.normalize(requestedPath).replace(/^(\.\.[/\\])+/, "");
-  const filePath = path.join(publicDir, safePath);
+const app = express();
 
-  if (!filePath.startsWith(publicDir)) {
-    sendText(res, 403, "Forbidden");
-    return;
-  }
+app.use(express.json({ limit: "1mb" }));
+app.use(express.static(publicDir));
 
-  fs.readFile(filePath, (err, data) => {
-    if (err) {
-      sendText(res, 404, "Not found");
-      return;
-    }
-
-    const ext = path.extname(filePath).toLowerCase();
-    const mimeType = mimeTypes[ext] || "application/octet-stream";
-    res.writeHead(200, { "Content-Type": mimeType });
-    res.end(data);
-  });
-}
-
-function serveVendorFile(res, pathname) {
-  const requestedPath = pathname.replace(/^\/vendor/, "");
-  const safePath = path.normalize(requestedPath).replace(/^(\.\.[/\\])+/, "");
-  const filePath = path.join(vendorDir, safePath);
-
-  if (!filePath.startsWith(vendorDir)) {
-    sendText(res, 403, "Forbidden");
-    return;
-  }
-
-  fs.readFile(filePath, (err, data) => {
-    if (err) {
-      sendText(res, 404, "Not found");
-      return;
-    }
-
-    const ext = path.extname(filePath).toLowerCase();
-    const mimeType = mimeTypes[ext] || "application/octet-stream";
-    res.writeHead(200, { "Content-Type": mimeType });
-    res.end(data);
-  });
-}
-
-const server = http.createServer(async (req, res) => {
-  const url = new URL(req.url, `http://${req.headers.host || "localhost"}`);
-  const pathname = url.pathname;
-
-  if (pathname === "/api/health" && req.method === "GET") {
-    sendJson(res, 200, { ok: true });
-    return;
-  }
-
-  if (pathname.startsWith("/vendor/") && req.method === "GET") {
-    serveVendorFile(res, pathname);
-    return;
-  }
-
-  if (pathname === "/api/items" && req.method === "GET") {
-    sendJson(res, 200, getInventoryResponse());
-    return;
-  }
-
-  if (pathname === "/api/items" && req.method === "POST") {
-    try {
-      const input = normalizeItemInput(await parseBody(req));
-      const item = insertItemStmt.get(
-        input.name,
-        input.category,
-        input.quantity,
-        input.unit,
-        input.barcode,
-        input.lowStockThreshold,
-        input.notes
-      );
-      sendJson(res, 201, { item });
-    } catch (error) {
-      sendJson(res, 400, getErrorResponse(error));
-    }
-    return;
-  }
-
-  const itemMatch = pathname.match(/^\/api\/items\/(\d+)$/);
-  if (itemMatch && req.method === "PUT") {
-    try {
-      const itemId = Number(itemMatch[1]);
-      const input = normalizeItemInput(await parseBody(req));
-      const item = updateItemStmt.get(
-        input.name,
-        input.category,
-        input.quantity,
-        input.unit,
-        input.barcode,
-        input.lowStockThreshold,
-        input.notes,
-        itemId
-      );
-
-      if (!item) {
-        sendJson(res, 404, { error: "Item not found", errorKey: "ITEM_NOT_FOUND" });
-        return;
-      }
-
-      sendJson(res, 200, { item });
-    } catch (error) {
-      sendJson(res, 400, getErrorResponse(error));
-    }
-    return;
-  }
-
-  if (itemMatch && req.method === "DELETE") {
-    const itemId = Number(itemMatch[1]);
-    const existing = selectItemStmt.get(itemId);
-    if (!existing) {
-      sendJson(res, 404, { error: "Item not found", errorKey: "ITEM_NOT_FOUND" });
-      return;
-    }
-
-    deleteItemStmt.run(itemId);
-    sendJson(res, 200, { ok: true });
-    return;
-  }
-
-  const quantityMatch = pathname.match(/^\/api\/items\/(\d+)\/quantity$/);
-  if (quantityMatch && req.method === "PATCH") {
-    try {
-      const itemId = Number(quantityMatch[1]);
-      const body = await parseBody(req);
-      const delta = Number(body.delta);
-      if (!Number.isFinite(delta)) {
-        const error = new Error("Quantity change must be numeric");
-        error.code = "QUANTITY_CHANGE_INVALID";
-        throw error;
-      }
-
-      const item = patchQuantityStmt.get(delta, itemId);
-      if (!item) {
-        sendJson(res, 404, { error: "Item not found", errorKey: "ITEM_NOT_FOUND" });
-        return;
-      }
-
-      sendJson(res, 200, { item });
-    } catch (error) {
-      sendJson(res, 400, getErrorResponse(error));
-    }
-    return;
-  }
-
-  if (req.method === "GET") {
-    serveStaticFile(req, res, pathname);
-    return;
-  }
-
-  sendText(res, 405, "Method not allowed");
+app.get("/api/health", (req, res) => {
+  res.json({ ok: true });
 });
 
-server.listen(PORT, HOST, () => {
+app.get("/api/items", (req, res) => {
+  res.json(getInventoryResponse());
+});
+
+app.post("/api/items", (req, res) => {
+  try {
+    const input = normalizeItemInput(req.body);
+    const item = insertItemStmt.get(
+      input.name,
+      input.category,
+      input.quantity,
+      input.unit,
+      input.barcode,
+      input.lowStockThreshold,
+      input.notes
+    );
+    res.status(201).json({ item });
+  } catch (error) {
+    res.status(400).json(getErrorResponse(error));
+  }
+});
+
+app.put("/api/items/:id", (req, res) => {
+  try {
+    const itemId = Number(req.params.id);
+    const input = normalizeItemInput(req.body);
+    const item = updateItemStmt.get(
+      input.name,
+      input.category,
+      input.quantity,
+      input.unit,
+      input.barcode,
+      input.lowStockThreshold,
+      input.notes,
+      itemId
+    );
+
+    if (!item) {
+      return res.status(404).json({ error: "Item not found", errorKey: "ITEM_NOT_FOUND" });
+    }
+
+    res.json({ item });
+  } catch (error) {
+    res.status(400).json(getErrorResponse(error));
+  }
+});
+
+app.delete("/api/items/:id", (req, res) => {
+  const itemId = Number(req.params.id);
+  const existing = selectItemStmt.get(itemId);
+  if (!existing) {
+    return res.status(404).json({ error: "Item not found", errorKey: "ITEM_NOT_FOUND" });
+  }
+
+  deleteItemStmt.run(itemId);
+  res.json({ ok: true });
+});
+
+app.patch("/api/items/:id/quantity", (req, res) => {
+  try {
+    const itemId = Number(req.params.id);
+    const delta = Number(req.body.delta);
+    if (!Number.isFinite(delta)) {
+      const error = new Error("Quantity change must be numeric");
+      error.code = "QUANTITY_CHANGE_INVALID";
+      throw error;
+    }
+
+    const item = patchQuantityStmt.get(delta, itemId);
+    if (!item) {
+      return res.status(404).json({ error: "Item not found", errorKey: "ITEM_NOT_FOUND" });
+    }
+
+    res.json({ item });
+  } catch (error) {
+    res.status(400).json(getErrorResponse(error));
+  }
+});
+
+app.listen(PORT, HOST, () => {
   console.log(`Shelfielist running on http://${HOST}:${PORT}`);
 });
