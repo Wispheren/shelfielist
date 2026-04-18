@@ -1,0 +1,8 @@
+{
+    "script": "server.js",
+    "watch": true,
+    "watch_options": {
+        "followSymlinks": false
+    },
+    "name": "shelfielist.wij.dk"
+}
