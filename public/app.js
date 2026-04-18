@@ -11,6 +11,7 @@ const state = {
     detector: null,
     lastCode: "",
     rafId: null,
+    rawStreamReady: false,
     stream: null,
     mode: "",
     lastScanAt: 0,
@@ -254,6 +255,7 @@ const elements = {
   scannerPreview: document.querySelector("#scannerPreview"),
   scannerResult: document.querySelector("#scannerResult"),
   scannerSheet: document.querySelector("#scannerSheet"),
+  scannerStatus: document.querySelector("#scannerStatus"),
   scannerTitle: document.querySelector("#scannerTitle"),
   scannerVideo: document.querySelector("#scannerVideo"),
   searchInput: document.querySelector("#searchInput"),
@@ -311,6 +313,10 @@ function formatNumber(value) {
 function showStatus(message, tone = "neutral") {
   elements.statusMessage.textContent = message;
   elements.statusMessage.dataset.tone = tone;
+  if (elements.scannerStatus) {
+    elements.scannerStatus.textContent = message;
+    elements.scannerStatus.dataset.tone = tone;
+  }
 }
 
 function describeScannerError(error) {
@@ -539,6 +545,7 @@ function closeScanner() {
   state.scanner.active = false;
   state.scanner.lastCode = "";
   state.scanner.lastScanAt = 0;
+  state.scanner.rawStreamReady = false;
   setScannerMode("");
 
   if (state.scanner.rafId) {
@@ -567,6 +574,34 @@ function closeScanner() {
   elements.scannerVideo.srcObject = null;
   elements.scannerSheet.classList.add("hidden");
   elements.scannerSheet.setAttribute("aria-hidden", "true");
+}
+
+async function ensureRawCameraStream() {
+  if (state.scanner.stream) {
+    if (!elements.scannerVideo.srcObject) {
+      elements.scannerVideo.srcObject = state.scanner.stream;
+    }
+    if (!state.scanner.rawStreamReady) {
+      await elements.scannerVideo.play();
+      state.scanner.rawStreamReady = true;
+    }
+    setScannerMode("raw");
+    return true;
+  }
+
+  state.scanner.stream = await navigator.mediaDevices.getUserMedia({
+    video: {
+      facingMode: { ideal: "environment" },
+      width: { ideal: 1280 },
+      height: { ideal: 720 }
+    },
+    audio: false
+  });
+  elements.scannerVideo.srcObject = state.scanner.stream;
+  await elements.scannerVideo.play();
+  state.scanner.rawStreamReady = true;
+  setScannerMode("raw");
+  return true;
 }
 
 function prefillFormForBarcode(barcode) {
@@ -822,49 +857,39 @@ async function openScanner() {
     return;
   }
 
-  if (!window.BarcodeDetector) {
-    showStatus(t("scannerFallbackLoading"));
-    const quaggaStarted = await startQuaggaScanner();
-    if (quaggaStarted) {
-      showStatus(t("scannerCameraLive"), "success");
-      return;
-    }
-    const zxingStarted = await startZxingScanner();
-    showStatus(
-      zxingStarted ? t("scannerCameraLive") : t("scannerUnsupported"),
-      zxingStarted ? "success" : "error"
-    );
-    return;
-  }
-
   try {
-    state.scanner.detector = new window.BarcodeDetector({
-      formats: ["ean_13", "ean_8", "upc_a", "upc_e", "code_128", "code_39"]
-    });
-    state.scanner.stream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: { ideal: "environment" } },
-      audio: false
-    });
-    elements.scannerVideo.srcObject = state.scanner.stream;
-    await elements.scannerVideo.play();
-    state.scanner.active = true;
+    await ensureRawCameraStream();
     showStatus(t("scannerCameraLive"), "success");
-    state.scanner.rafId = requestAnimationFrame(scanCurrentFrame);
-  } catch (error) {
-    console.error("Native barcode scanner failed", error);
+
+    if (window.BarcodeDetector) {
+      try {
+        state.scanner.detector = new window.BarcodeDetector({
+          formats: ["ean_13", "ean_8", "upc_a", "upc_e", "code_128", "code_39"]
+        });
+        state.scanner.active = true;
+        setScannerMode("native");
+        state.scanner.rafId = requestAnimationFrame(scanCurrentFrame);
+        return;
+      } catch (error) {
+        console.error("Native barcode scanner setup failed", error);
+      }
+    }
+
     showStatus(t("scannerFallbackCamera"));
     const quaggaStarted = await startQuaggaScanner();
     if (quaggaStarted) {
       showStatus(t("scannerCameraLive"), "success");
       return;
     }
+
     const zxingStarted = await startZxingScanner();
     showStatus(
-      zxingStarted
-        ? t("scannerCameraLive")
-        : t("scannerPermissionDetailed", { reason: describeScannerError(error) }),
+      zxingStarted ? t("scannerCameraLive") : t("scannerUnsupported"),
       zxingStarted ? "success" : "error"
     );
+  } catch (error) {
+    console.error("Raw camera startup failed", error);
+    showStatus(t("scannerPermissionDetailed", { reason: describeScannerError(error) }), "error");
   }
 }
 

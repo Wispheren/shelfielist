@@ -452,6 +452,20 @@ button {
   line-height: 1.5;
 }
 
+.scanner-status {
+  min-height: 1.3rem;
+  font-size: 0.95rem;
+  color: var(--muted);
+}
+
+.scanner-status[data-tone="success"] {
+  color: var(--ok);
+}
+
+.scanner-status[data-tone="error"] {
+  color: #9a3131;
+}
+
 .scanner-manual {
   display: grid;
   gap: 12px;
