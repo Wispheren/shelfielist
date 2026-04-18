@@ -11,7 +11,9 @@ const state = {
     detector: null,
     lastCode: "",
     rafId: null,
-    stream: null
+    stream: null,
+    zxingControls: null,
+    zxingReader: null
   }
 };
 
@@ -82,6 +84,7 @@ const translations = {
       "Denne browser kan ikke aflæse stregkoder fra billeder endnu. Brug manuel indtastning i stedet.",
     scannerPhotoProcessing: "Behandler billede...",
     scannerPhotoNoCode: "Der blev ikke fundet en stregkode på billedet.",
+    scannerFallbackLoading: "Indlæser alternativ scanner...",
     scannerSearching: "Scanner efter stregkode...",
     scannerFoundKnown: "Fundet i lageret",
     scannerFoundUnknown: "Ny stregkode",
@@ -177,6 +180,7 @@ const translations = {
       "This browser cannot read barcodes from photos yet. Use manual entry instead.",
     scannerPhotoProcessing: "Processing photo...",
     scannerPhotoNoCode: "No barcode was found in the photo.",
+    scannerFallbackLoading: "Loading fallback scanner...",
     scannerSearching: "Looking for a barcode...",
     scannerFoundKnown: "Found in inventory",
     scannerFoundUnknown: "New barcode",
@@ -526,6 +530,11 @@ function closeScanner() {
     state.scanner.stream = null;
   }
 
+  if (state.scanner.zxingControls) {
+    state.scanner.zxingControls.stop();
+    state.scanner.zxingControls = null;
+  }
+
   elements.scannerVideo.srcObject = null;
   elements.scannerSheet.classList.add("hidden");
   elements.scannerSheet.setAttribute("aria-hidden", "true");
@@ -596,29 +605,95 @@ async function scanCurrentFrame() {
   }
 }
 
-async function processBarcodeImage(file) {
-  if (!window.BarcodeDetector) {
-    showStatus(t("scannerPhotoUnsupported"), "error");
-    return;
+function getDecodedText(result) {
+  if (!result) {
+    return "";
   }
 
+  if (typeof result === "string") {
+    return result;
+  }
+
+  if (typeof result.getText === "function") {
+    return result.getText();
+  }
+
+  return result.text || result.rawValue || "";
+}
+
+async function startZxingScanner() {
+  const ZXingBrowser = window.ZXingBrowser;
+  if (!ZXingBrowser?.BrowserMultiFormatReader) {
+    return false;
+  }
+
+  state.scanner.zxingReader =
+    state.scanner.zxingReader ||
+    new ZXingBrowser.BrowserMultiFormatReader(undefined, {
+      delayBetweenScanAttempts: 250
+    });
+
+  try {
+    state.scanner.active = true;
+    state.scanner.zxingControls = await state.scanner.zxingReader.decodeFromVideoDevice(
+      undefined,
+      elements.scannerVideo,
+      async (result) => {
+        const text = getDecodedText(result);
+        if (text) {
+          await handleScannedBarcode(text);
+        }
+      }
+    );
+    showStatus(t("scannerCameraLive"), "success");
+    return true;
+  } catch {
+    state.scanner.active = false;
+    return false;
+  }
+}
+
+async function processBarcodeImage(file) {
   try {
     showStatus(t("scannerPhotoProcessing"));
-    const bitmap = await createImageBitmap(file);
-    const detector =
-      state.scanner.detector ||
-      new window.BarcodeDetector({
-        formats: ["ean_13", "ean_8", "upc_a", "upc_e", "code_128", "code_39"]
-      });
-    const detected = await detector.detect(bitmap);
-    bitmap.close();
+    if (window.BarcodeDetector) {
+      const bitmap = await createImageBitmap(file);
+      const detector =
+        state.scanner.detector ||
+        new window.BarcodeDetector({
+          formats: ["ean_13", "ean_8", "upc_a", "upc_e", "code_128", "code_39"]
+        });
+      const detected = await detector.detect(bitmap);
+      bitmap.close();
 
-    if (!detected.length) {
+      if (!detected.length) {
+        showStatus(t("scannerPhotoNoCode"), "error");
+        return;
+      }
+
+      await handleScannedBarcode(detected[0].rawValue);
+      showStatusKey("scannerCodeUsed", "success");
+      return;
+    }
+
+    const ZXingBrowser = window.ZXingBrowser;
+    if (!ZXingBrowser?.BrowserMultiFormatReader) {
+      showStatus(t("scannerPhotoUnsupported"), "error");
+      return;
+    }
+
+    state.scanner.zxingReader =
+      state.scanner.zxingReader || new ZXingBrowser.BrowserMultiFormatReader();
+    const imageUrl = URL.createObjectURL(file);
+    const result = await state.scanner.zxingReader.decodeFromImageUrl(imageUrl);
+    URL.revokeObjectURL(imageUrl);
+    const text = getDecodedText(result);
+    if (!text) {
       showStatus(t("scannerPhotoNoCode"), "error");
       return;
     }
 
-    await handleScannedBarcode(detected[0].rawValue);
+    await handleScannedBarcode(text);
     showStatusKey("scannerCodeUsed", "success");
   } catch {
     showStatus(t("scannerPhotoUnsupported"), "error");
@@ -644,7 +719,9 @@ async function openScanner() {
   }
 
   if (!window.BarcodeDetector) {
-    showStatus(t("scannerUnsupported"), "error");
+    showStatus(t("scannerFallbackLoading"));
+    const zxingStarted = await startZxingScanner();
+    showStatus(zxingStarted ? t("scannerCameraLive") : t("scannerUnsupported"), zxingStarted ? "success" : "error");
     return;
   }
 
@@ -662,7 +739,8 @@ async function openScanner() {
     showStatus(t("scannerCameraLive"), "success");
     state.scanner.rafId = requestAnimationFrame(scanCurrentFrame);
   } catch {
-    showStatus(t("scannerPermissionError"), "error");
+    const zxingStarted = await startZxingScanner();
+    showStatus(zxingStarted ? t("scannerCameraLive") : t("scannerPermissionError"), zxingStarted ? "success" : "error");
   }
 }
 
