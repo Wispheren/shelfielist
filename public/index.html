@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="da">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Shelfielist</title>
+    <meta
+      id="metaDescription"
+      name="description"
+      content="Et delt husholdningslager til at holde styr paa det, I har derhjemme."
+    />
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="hero">
+        <div class="hero__copy">
+          <p class="eyebrow">Shelfielist</p>
+          <div class="hero__topline">
+            <h1 id="heroTitle">Jeres delte overblik over hjemmets lager.</h1>
+            <label class="locale-picker" for="localeSelect">
+              <span id="localeLabel">Sprog</span>
+              <select id="localeSelect" aria-label="Sprog">
+                <option value="da">Dansk</option>
+                <option value="en">English</option>
+              </select>
+            </label>
+          </div>
+          <p class="hero__text" id="heroText">
+            Hold styr paa badevaerelsesvarer, kolonial, fryserlager og alt det andet, der altid
+            slipper op paa det vaerst taenkelige tidspunkt.
+          </p>
+          <button class="scan-launch-button" id="openScannerButton" type="button">
+            Scan stregkode
+          </button>
+        </div>
+
+        <div class="hero__stats" id="summaryCards"></div>
+      </header>
+
+      <main class="layout">
+        <section class="panel panel--form">
+          <div class="panel__header">
+            <div>
+              <p class="panel__eyebrow" id="formEyebrow">Administrer varer</p>
+              <h2 id="formTitle">Tilfoej en ny vare</h2>
+            </div>
+            <button class="ghost-button hidden" id="cancelEditButton" type="button">
+              Annuller redigering
+            </button>
+          </div>
+
+          <form id="itemForm" class="item-form">
+            <input type="hidden" id="itemId" />
+
+            <label>
+              <span id="nameLabel">Navn</span>
+              <input id="name" name="name" type="text" placeholder="Toiletpapir" required />
+            </label>
+
+            <label>
+              <span id="categoryLabel">Kategori</span>
+              <input id="category" name="category" type="text" placeholder="Badevaerelse" />
+            </label>
+
+            <div class="field-row">
+              <label>
+                <span id="quantityLabel">Antal</span>
+                <input id="quantity" name="quantity" type="number" min="0" step="0.1" value="1" />
+              </label>
+
+              <label>
+                <span id="unitLabel">Enhed</span>
+                <input id="unit" name="unit" type="text" placeholder="ruller" value="stk" />
+              </label>
+            </div>
+
+            <label>
+              <span id="barcodeLabel">Stregkode</span>
+              <input
+                id="barcode"
+                name="barcode"
+                type="text"
+                inputmode="numeric"
+                placeholder="Valgfri stregkode"
+              />
+            </label>
+
+            <div class="field-row">
+              <label>
+                <span id="lowStockThresholdLabel">Lav beholdning ved</span>
+                <input
+                  id="lowStockThreshold"
+                  name="lowStockThreshold"
+                  type="number"
+                  min="0"
+                  step="0.1"
+                  value="0"
+                />
+              </label>
+
+              <label>
+                <span id="notesLabel">Noter</span>
+                <input id="notes" name="notes" type="text" placeholder="Oeverste hylde" />
+              </label>
+            </div>
+
+            <button class="primary-button" id="submitButton" type="submit">Gem vare</button>
+          </form>
+        </section>
+
+        <section class="panel panel--list">
+          <div class="panel__header panel__header--stacked">
+            <div>
+              <p class="panel__eyebrow" id="overviewEyebrow">Overblik</p>
+              <h2 id="overviewTitle">Det I har derhjemme</h2>
+            </div>
+
+            <div class="toolbar">
+              <input id="searchInput" type="search" placeholder="Soeg efter varer eller kategorier" />
+              <select id="stockFilter">
+                <option value="all">Alle varer</option>
+                <option value="low">Kun lav beholdning</option>
+              </select>
+            </div>
+          </div>
+
+          <div id="statusMessage" class="status-message" aria-live="polite"></div>
+          <div id="inventoryList" class="inventory-list"></div>
+        </section>
+      </main>
+    </div>
+
+    <div class="scanner-sheet hidden" id="scannerSheet" aria-hidden="true">
+      <div class="scanner-sheet__backdrop" data-close-scanner="true"></div>
+      <section class="scanner-panel" aria-labelledby="scannerTitle" aria-modal="true" role="dialog">
+        <div class="scanner-panel__header">
+          <div>
+            <p class="panel__eyebrow" id="scannerEyebrow">Stregkodescanner</p>
+            <h2 id="scannerTitle">Scan en vare med dit kamera</h2>
+          </div>
+          <button class="ghost-button" id="closeScannerButton" type="button">Luk</button>
+        </div>
+
+        <div class="scanner-panel__body">
+          <div class="scanner-preview">
+            <video id="scannerVideo" autoplay muted playsinline></video>
+            <div class="scanner-preview__frame" aria-hidden="true"></div>
+          </div>
+
+          <div class="scanner-panel__controls">
+            <p class="scanner-help" id="scannerHelp">
+              Peg kameraet mod en stregkode. Hvis varen allerede findes, kan du hurtigt laegge til
+              eller traekke fra.
+            </p>
+
+            <div class="scanner-manual">
+              <input
+                id="manualBarcodeInput"
+                type="text"
+                inputmode="numeric"
+                placeholder="Skriv stregkode manuelt"
+              />
+              <button class="ghost-button" id="manualBarcodeButton" type="button">Brug kode</button>
+            </div>
+
+            <div class="scanner-photo">
+              <input
+                class="hidden"
+                id="barcodePhotoInput"
+                type="file"
+                accept="image/*"
+                capture="environment"
+              />
+              <button class="ghost-button" id="barcodePhotoButton" type="button">
+                Tag billede af stregkode
+              </button>
+            </div>
+          </div>
+
+          <div class="scanner-result hidden" id="scannerResult"></div>
+        </div>
+      </section>
+    </div>
+
+    <template id="itemCardTemplate">
+      <article class="item-card">
+        <div class="item-card__head">
+          <div>
+            <span class="item-card__category"></span>
+            <h3 class="item-card__name"></h3>
+          </div>
+          <span class="item-card__badge"></span>
+        </div>
+
+        <div class="item-card__body">
+          <p class="item-card__quantity"></p>
+          <p class="item-card__meta"></p>
+        </div>
+
+        <div class="item-card__actions">
+          <button class="quick-button" data-action="decrease" type="button">-1</button>
+          <button class="quick-button" data-action="increase" type="button">+1</button>
+          <button class="ghost-button" data-action="edit" type="button">Rediger</button>
+          <button class="ghost-button danger-button" data-action="delete" type="button">Slet</button>
+        </div>
+      </article>
+    </template>
+
+    <script src="/app.js"></script>
+  </body>
+</html>
