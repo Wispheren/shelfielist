@@ -7,6 +7,7 @@ const { DatabaseSync } = require("node:sqlite");
 const PORT = Number(process.env.PORT || 3434);
 const HOST = process.env.HOST || "0.0.0.0";
 const publicDir = path.join(__dirname, "public");
+const vendorDir = path.join(__dirname, "node_modules", "quagga", "dist");
 const dataDir = path.join(__dirname, "data");
 const dbPath = path.join(dataDir, "shelfielist.db");
 
@@ -300,12 +301,40 @@ function serveStaticFile(req, res, pathname) {
   });
 }
 
+function serveVendorFile(res, pathname) {
+  const requestedPath = pathname.replace(/^\/vendor/, "");
+  const safePath = path.normalize(requestedPath).replace(/^(\.\.[/\\])+/, "");
+  const filePath = path.join(vendorDir, safePath);
+
+  if (!filePath.startsWith(vendorDir)) {
+    sendText(res, 403, "Forbidden");
+    return;
+  }
+
+  fs.readFile(filePath, (err, data) => {
+    if (err) {
+      sendText(res, 404, "Not found");
+      return;
+    }
+
+    const ext = path.extname(filePath).toLowerCase();
+    const mimeType = mimeTypes[ext] || "application/octet-stream";
+    res.writeHead(200, { "Content-Type": mimeType });
+    res.end(data);
+  });
+}
+
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host || "localhost"}`);
   const pathname = url.pathname;
 
   if (pathname === "/api/health" && req.method === "GET") {
     sendJson(res, 200, { ok: true });
+    return;
+  }
+
+  if (pathname.startsWith("/vendor/") && req.method === "GET") {
+    serveVendorFile(res, pathname);
     return;
   }
 
